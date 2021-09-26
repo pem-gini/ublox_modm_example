@@ -27,6 +27,8 @@ Connect the following things
   * Zed-F9P[RX/MOSI] <---> NucleoF439Zi[CP9, Pin D53 - which is connected to STM32 Pin PD5] [[see here]](https://www.st.com/resource/en/user_manual/dm00244518-stm32-nucleo144-boards-mb1137-stmicroelectronics.pdf)
   * Zed-F9P[TX/MISO] <---> NucleoF439Zi[CP9, Pin D52 - which is connected to STM32 Pin PD6] [[see here]](https://www.st.com/resource/en/user_manual/dm00244518-stm32-nucleo144-boards-mb1137-stmicroelectronics.pdf)
 
+![signal-2021-09-26-035507](https://user-images.githubusercontent.com/6985609/134790522-273adc4a-45ad-4829-bf65-e784d7de6ffb.jpeg)
+
 ## Some more important things?
 
 * the ZED-F9P's default configuration only allows the device to send `NMEA` messaged via UART1 with a baudrate of 38400
