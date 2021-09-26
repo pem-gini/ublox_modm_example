@@ -1,0 +1,20 @@
+<library>
+  <repositories>
+    <repository>
+      <path>../libs/modm/repo.lb</path>
+    </repository>
+    <repository>
+      <path>../libs/etl_modm/repo.lb</path>
+    </repository>
+  </repositories>
+  <extends>modm:nucleo-f439zi</extends>
+  <options>
+    <option name="modm:build:build.path">../../../build/nucleo_f439zi/ublox</option>
+  </options>
+  <modules>
+    <module>modm:build:scons</module>  
+    <module>modm:platform:gpio</module>
+    <module>modm:platform:uart:2</module>
+    <module>etl_modm:etl</module>
+  </modules>
+</library>
