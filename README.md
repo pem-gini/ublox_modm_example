@@ -2,6 +2,9 @@
 
 This repository contains a rudimentary modm c++ example driver for the [ZED-f9P](https://www.u-blox.com/en/product/zed-f9p-module?lang=de). 
 
+![ublox_driver_peek](https://user-images.githubusercontent.com/6985609/134790534-1ea24d6a-eed3-4e99-8994-11ff50ff4aa8.gif)
+
+
 ## How can I configure the ublox ZED-F9P?
 
 * https://github.com/DroidDrive/ublox_gnss_testbench
