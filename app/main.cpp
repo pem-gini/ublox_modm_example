@@ -12,9 +12,12 @@
 
 using namespace Board;
 
-__attribute__((__packed__)) typedef struct ubx_frame_header {
+__attribute__((__packed__)) typedef struct ubx_frame_sync {
     uint8_t syncA;
     uint8_t syncB;
+} ubx_frame_sync_t;
+__attribute__((__packed__)) typedef struct ubx_frame_header {
+    ubx_frame_sync_t sync;
     uint8_t class_;
     uint8_t id;
     uint16_t length;
@@ -23,8 +26,8 @@ __attribute__((__packed__)) typedef struct ubx_frame_header {
     // uint8_t crcB;
 } ubx_frame_header_t;
 __attribute__((__packed__)) typedef struct ubx_frame_crc {
-    uint8_t crcA_;
-    uint8_t crcB;
+    uint8_t a;
+    uint8_t b;
 } ubx_frame_crc_t;
 
 // __attribute__((__packed__)) typedef struct ubx_frame {
@@ -130,7 +133,13 @@ __attribute__((__packed__)) typedef struct ubx_nav_clock {
     uint32_t fAcc;
 } ubx_nav_clock_t;
 
-enum class UbxMessageType { NONE = 0x00, UBX_NAV_PVT, UBX_NAV_STATUS, UBX_NAV_CLOCK, UBX_NAV_COV };
+enum class UbxMessageId : uint8_t {
+    NONE = 0x00,
+    UBX_NAV_PVT = 0x07,
+    UBX_NAV_STATUS = 0x03,
+    UBX_NAV_CLOCK = 0x22
+    // UBX_NAV_COV = ??? undefined for now
+};
 
 class UbloxDriver {
     static constexpr size_t SIZE = 1024;
@@ -141,9 +150,13 @@ class UbloxDriver {
         template <typename T> std::size_t operator()(T t) const { return static_cast<std::size_t>(t); }
     };
 
-    using NavStatusCallback = etl::delegate<void(ubx_nav_status_t)>;
-    using NavPvtCallback = etl::delegate<void(ubx_nav_pvt_t)>;
-    using NavClockCallback = etl::delegate<void(ubx_nav_clock_t)>;
+    template <typename T> using UserDataReceiveCallback = etl::delegate<void(T)>;
+
+    using NavStatusCallback = UserDataReceiveCallback<const ubx_nav_status_t>;
+    using NavPvtCallback = UserDataReceiveCallback<const ubx_nav_pvt_t>;
+    using NavClockCallback = UserDataReceiveCallback<const ubx_nav_clock_t>;
+
+    using DecodeFunction = etl::delegate<void(const UbloxDriver&, const uint8_t*, const uint16_t)>;
 
     using Buffer = etl::array<uint8_t, SIZE>;
 
@@ -159,7 +172,8 @@ public:
         if (state_ == STATE::WAITING_FOR_SYNC_A && byte == to_underlying(SPECIAL::SYNC_A)) {
             MODM_LOG_INFO << "========================================" << modm::endl;
             /// check if we have a full frame together from last sync
-            if (byteCount_ > 2) {
+            /// header + crc = 8 bytes, so if our supposed frame is less than that, it is definiteley corrupted
+            if (byteCount_ > sizeof(ubx_frame_header_t) + sizeof(ubx_frame_crc_t)) {
                 processFrame(buf_);
                 byteCount_ = 0;
             }
@@ -187,68 +201,87 @@ public:
     }
 
     void processFrame(const Buffer& buf) {
-        // MODM_LOG_INFO << "process()" << modm::endl;
-        // MODM_LOG_INFO << "header index: " << 0 << " with length: " << sizeof(ubx_frame_header_t) << modm::endl;
-
-        // for (uint32_t i = 0; i < 10; i++) {
-        //     MODM_LOG_INFO << " " << modm::hex << buf.at(i);
-        // }
-        // MODM_LOG_INFO << modm::endl;
-
-        const ubx_frame_header_t* frameHeaderPtr = reinterpret_cast<const ubx_frame_header_t*>(buf.data());
-        ubx_frame_header_t frameHeader;
-        std::memcpy(&frameHeader, frameHeaderPtr, sizeof(ubx_frame_header_t));
+        /// grab header
+        const ubx_frame_header_t& frameHeader = *reinterpret_cast<const ubx_frame_header_t*>(buf.data());
         // length field of the header seems incosistent with the message definition ..
         // it should be 16 for UBX_NAVSTATUS, but the ublox sends 20 ...
         // they probably cound the class + id + crcA + crcB as well, which means the actual size is whatever ublox sends
         // us -4
-        frameHeader.length -= 4;
         /// frameHeader.length contains the sent payload length
         /// byteCount contains the actual received byte length, we should trust this more
-        uint16_t actualPayloadLength = byteCount_ - sizeof(ubx_frame_header_t) - sizeof(ubx_frame_crc_t);
-        // MODM_LOG_INFO << "byteCount: " << byteCount_ << modm::endl;
-        // MODM_LOG_INFO << "actualPayloadLength: " << actualPayloadLength << modm::endl;
+        const uint16_t actualPayloadLength = byteCount_ - sizeof(ubx_frame_header_t) - sizeof(ubx_frame_crc_t);
 
-        // uint8_t crcA = buf_[sizeof(ubx_frame_header_t) + frameHeader.length];
-        // uint8_t crcB = buf_[sizeof(ubx_frame_header_t) + frameHeader.length + 1];
-
-        /// do decoding
-        UbxMessageType msgType = decodeMessageType(frameHeader.class_, frameHeader.id);
-        if (msgType != UbxMessageType::NONE) {
-            /// ...
+        // check crc
+        /// grab whole frame, but leave the syncs and the crc out
+        const uint16_t crcFrameStartIndex = sizeof(ubx_frame_sync_t);
+        const uint16_t crcFrameEndIndex = byteCount_ - sizeof(ubx_frame_sync_t);
+        const ubx_frame_crc_t crc = *reinterpret_cast<const ubx_frame_crc_t*>(&buf.at(byteCount_ - sizeof(uint16_t)));
+        ubx_frame_crc_t calculatedCrc = calculateCrc(buf, crcFrameStartIndex, crcFrameEndIndex);
+        if (crc.a == calculatedCrc.a && crc.b == calculatedCrc.b) {
+            /// crc ok
+            /// grab payload
             const uint8_t* payload = &buf.at(sizeof(ubx_frame_header_t));
-            // MODM_LOG_INFO << modm::hex << payload[0] << modm::endl;
-            // MODM_LOG_INFO << modm::hex << payload[1] << modm::endl;
-            // MODM_LOG_INFO << (unsigned long)buf.data() << modm::endl;
-            // MODM_LOG_INFO << (unsigned long)payload << modm::endl;
-            decodeUbxMessage(msgType, payload, actualPayloadLength);
-
+            /// do decoding
+            auto decodeFunc = decodeMessageType(frameHeader.class_, frameHeader.id);
+            if (decodeFunc.is_valid()) {
+                decodeFunc(*this, payload, actualPayloadLength);
+            } else {
+                printFrameHeader(frameHeader);
+            }
         } else {
-            printFrameHeader(frameHeader);
+            /// drop boken packages
         }
     }
 
-    UbxMessageType decodeMessageType(uint8_t class_, uint8_t id) {
-        UbxMessageType msgType = UbxMessageType::NONE;
+    ubx_frame_crc_t calculateCrc(const Buffer& buf, uint16_t start, uint16_t end) {
+        uint8_t a = 0;
+        uint8_t b = 0;
+        for (uint16_t i = start; i < end; i++) {
+            a = a + buf.at(i);
+            b = b + a;
+        }
+        return ubx_frame_crc_t { a, b };
+    }
+
+    template <typename T, typename CB> inline void userCall(const T* ptr, const uint16_t length, const CB cb) const {
+        /// does this frame and the userCallback seem ok?
+        if (length == sizeof(T) && cb.is_valid()) {
+            /// create copy of the payload data before calling user callbacks
+            T copy;
+            std::memcpy(&copy, ptr, length);
+            /// call user callback
+            cb(copy);
+        }
+    }
+    template <typename T> inline const T* payloadCast(const uint8_t* payload) const {
+        const T* ptr = reinterpret_cast<const T*>(payload);
+        return ptr;
+    }
+
+    DecodeFunction decodeMessageType(uint8_t class_, uint8_t id) {
+        DecodeFunction f;
+        UbxMessageId msgType = UbxMessageId(id);
         switch (class_) {
         case 0x01: {
-            switch (id) {
-            case 0x03: {
-                msgType = UbxMessageType::UBX_NAV_STATUS;
+            switch (msgType) {
+            case UbxMessageId::UBX_NAV_STATUS: {
+                f = [](const UbloxDriver& parent, const uint8_t* payload, const uint16_t length) {
+                    parent.userCall(parent.payloadCast<ubx_nav_status_t>(payload), length, parent.navStatusCb_);
+                };
                 break;
             }
-            case 0x07: {
-                msgType = UbxMessageType::UBX_NAV_PVT;
+            case UbxMessageId::UBX_NAV_PVT: {
+                f = [](const UbloxDriver& parent, const uint8_t* payload, const uint16_t length) {
+                    parent.userCall(parent.payloadCast<ubx_nav_pvt_t>(payload), length, parent.navPvtCb_);
+                };
                 break;
             }
-            case 0x22: {
-                msgType = UbxMessageType::UBX_NAV_CLOCK;
+            case UbxMessageId::UBX_NAV_CLOCK: {
+                f = [](const UbloxDriver& parent, const uint8_t* payload, const uint16_t length) {
+                    parent.userCall(parent.payloadCast<ubx_nav_clock_t>(payload), length, parent.navClockCb_);
+                };
                 break;
             }
-            // case xxxx: { // ????????????????????????????????????????????
-            //     msgType = UbxMessageType::UBX_NAV_COV;
-            //     break;
-            // }
             default:
                 break;
             }
@@ -258,39 +291,9 @@ public:
             MODM_LOG_INFO << "... " << modm::hex << class_ << " " << id << modm::endl;
             break;
         }
-        return msgType;
+        return f;
     }
 
-    template <typename T, typename CB> inline void userCall(const T* ptr, uint16_t length, CB cb) {
-        if (length == sizeof(T) && cb.is_valid()) {
-            T copy;
-            std::memcpy(&copy, ptr, length);
-            cb(copy);
-        }
-    }
-    template <typename T> inline const T* payloadCast(const uint8_t* payload) {
-        const T* ptr = reinterpret_cast<const T*>(payload);
-        return ptr;
-    }
-
-    void decodeUbxMessage(UbxMessageType msgType, const uint8_t* payload, uint16_t length) {
-        switch (msgType) {
-        case UbxMessageType::UBX_NAV_STATUS: {
-            userCall(payloadCast<ubx_nav_status>(payload), length, navStatusCb_);
-            break;
-        }
-        case UbxMessageType::UBX_NAV_PVT: {
-            userCall(payloadCast<ubx_nav_pvt>(payload), length, navPvtCb_);
-            break;
-        }
-        case UbxMessageType::UBX_NAV_CLOCK: {
-            userCall(payloadCast<ubx_nav_clock>(payload), length, navClockCb_);
-            break;
-        }
-        default:
-            break;
-        }
-    }
     void printFrameHeader(const ubx_frame_header_t& header) {
         MODM_LOG_INFO << "FrameHeader:" << modm::endl
                       << modm::hex << "  - class: 0x" << modm::hex << header.class_ << modm::endl
@@ -343,11 +346,11 @@ int main() {
     Usart2::initialize<Board::SystemClock, 38400_Bd>();
     MODM_LOG_INFO << "Initialized" << modm::endl;
 
-    ublox.registerNavStatusCallback([](ubx_nav_status_t status) {
+    ublox.registerNavStatusCallback([](const ubx_nav_status_t status) {
         MODM_LOG_INFO << "Nav Status Received: " << modm::endl << " - gpsFix: " << status.gpsFix << modm::endl;
     });
 
-    ublox.registerNavPvtCallback([](ubx_nav_pvt_t pvt) {
+    ublox.registerNavPvtCallback([](const ubx_nav_pvt_t pvt) {
         etl::string<40> latlon;
         etl::string_stream ss(latlon);
         ss << etl::setprecision(7) << " - lat: " << static_cast<float>(pvt.lat * 1e-7) << "\n"
@@ -355,7 +358,7 @@ int main() {
         MODM_LOG_INFO << "Nav Pvt Received: " << modm::endl << ss.str().c_str() << modm::endl;
     });
 
-    ublox.registerNavClockCallback([](ubx_nav_clock_t clock) {
+    ublox.registerNavClockCallback([](const ubx_nav_clock_t clock) {
         MODM_LOG_INFO << "Nav Clock Received: " << modm::endl
                       << " - iTOW: " << clock.iTOW << modm::endl
                       << " - clock bias: " << clock.clkB << modm::endl;
