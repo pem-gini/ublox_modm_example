@@ -1,5 +1,8 @@
 # ublox_modm_example
 
+<img src="https://user-images.githubusercontent.com/6985609/135155455-ffbb4192-b8ed-4b80-9888-1144ac22c469.png" alt="Ducktrain Logo" width="30%" >
+
+
 This repository contains a rudimentary modm c++ example driver for the [ZED-f9P](https://www.u-blox.com/en/product/zed-f9p-module?lang=de). 
 
 ![ublox_driver_peek](https://user-images.githubusercontent.com/6985609/134790534-1ea24d6a-eed3-4e99-8994-11ff50ff4aa8.gif)
