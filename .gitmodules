@@ -1,6 +1,7 @@
 [submodule "libs/modm"]
 	path = libs/modm
 	url = https://github.com/modm-io/modm
+	shallow = true
 [submodule "libs/etl_modm"]
 	path = libs/etl_modm
 	url = git@github.com:DroidDrive/etl_modm
