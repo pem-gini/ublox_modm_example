@@ -4,5 +4,5 @@
 	shallow = true
 [submodule "libs/etl_modm"]
 	path = libs/etl_modm
-	url = git@github.com:DroidDrive/etl_modm
+	url = ../etl_modm
 	branch = master
